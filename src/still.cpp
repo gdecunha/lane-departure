@@ -8,6 +8,7 @@ using namespace cv;
 
 
 
+
 Mat original;
 vector<Point2f> srcpoints;
 Mat inverted;
@@ -172,13 +173,19 @@ vector<Point2f> slidingWindow(const Mat& in, Rect window){
 
         // keep track of previous average
         if (points.empty()) {
-            // If this is the first window, use the center
-            avg = window.x + window.width * 0.5;
+            // If this is the first left window, start on left side 
+            if (window.x < 550){
+                avg = 150;
+            } else {
+                avg = 1280 - 150;
+            }
+            
         } else {
             // Otherwise use last known avg
             avg = points.back().x;
         }
         
+        bool empty = true;
         // find avg x position of pixels
         if (!whitePixels.empty()) {
             float sum = 0.0;
@@ -186,13 +193,17 @@ vector<Point2f> slidingWindow(const Mat& in, Rect window){
                 sum += window.x + pt.x;
             }
             avg = sum / whitePixels.size();
+            empty = false;
+
+
+            // add avg x of pixels and their height to vec
+            Point point(avg, window.y + window.height*0.5);
+            points.push_back( point);
         }
         
 
 
-        // add avg x of pixels and their height to vec
-        Point point(avg, window.y + window.height*0.5);
-        points.push_back( point);
+        
 
 
         
@@ -200,8 +211,12 @@ vector<Point2f> slidingWindow(const Mat& in, Rect window){
         // draw the window and the avg point
         Mat frame;
         current.copyTo(frame);
-        rectangle(frame, window, Scalar(0, 255, 0), 2);        // Green window
-        circle(frame, point, 5, Scalar(0, 0, 255), 3);       // Cyan point
+        rectangle(frame, window, Scalar(0, 255, 0), 2);        
+
+        if (!empty){
+            circle(frame, Point(avg, window.y + window.height * 0.5), 5, Scalar(0, 0, 255), 3);  
+        }
+             
 
         debugFrames.push_back(frame);
 
@@ -219,7 +234,10 @@ vector<Point2f> slidingWindow(const Mat& in, Rect window){
         }
 
         // move window 
-        window.x += (point.x - middle);
+        if (!empty){
+            window.x += (avg - middle);
+        }
+        
 
         // if out of range move back in 
         if (window.x < 0){
@@ -233,9 +251,9 @@ vector<Point2f> slidingWindow(const Mat& in, Rect window){
    
     for (const auto& frame : debugFrames) {
         namedWindow("Sliding Window Playback", WINDOW_NORMAL);
-        moveWindow("Sliding Window Playback", 100, 100);
+        moveWindow("Sliding Window Playback", 300, 300);
         imshow("Sliding Window Playback", frame);
-        waitKey(100);  // Longer pause to visualize motion
+        waitKey(1000);  // Longer pause to visualize motion
     }
     destroyWindow("Sliding Window Playback");
 
@@ -247,11 +265,32 @@ vector<Point2f> slidingWindow(const Mat& in, Rect window){
 
 }
 
+Mat leastSquares(vector<Point2f> pts){
+
+    int n = static_cast<int>(pts.size());
+    Mat A(n, 3, CV_32F);
+    Mat b(n, 1, CV_32F);
+    Mat coef;
+
+
+    for (int i = 0 ; i < pts.size(); i++){
+        float x = static_cast<float>(pts[i].x);
+        A.at<float>(i, 0) = x*x;
+        A.at<float>(i, 1) = x;
+        A.at<float>(i, 2) = 1.0;
+        b.at<float>(i, 0) = static_cast<float>(pts[i].y);
+    }
+
+    solve(A, b, coef, DECOMP_SVD);
+
+    return coef;
+}
+
 
 Mat drawPoints(const Mat& in, vector<Point2f> left, vector<Point2f> right){
 
 
-    // TODO implement least squares fitting
+    // TODO possible improve least squares
 
 
     Mat current;
@@ -261,32 +300,77 @@ Mat drawPoints(const Mat& in, vector<Point2f> left, vector<Point2f> right){
 
     // draw left lines
     perspectiveTransform(left, out, inverted);
-
+   
     for (int i = 0; i < out.size() - 1; i++ ){
+       
         line(current, out[i], out[i + 1], Scalar(0, 255, 0), 3);
-
+        
     }
 
+    Mat lcurve = leastSquares(out);
+    float la = lcurve.at<float>(0);
+    float lb = lcurve.at<float>(1);
+    float lc = lcurve.at<float>(2);
+
+    
+    vector<Point> fcp;
+    for (int i = 0; i < out.size(); i++){
+        float x = out[i].x;
+        float y = la*x*x + lb*x + lc;
+        //circle(current, Point(x, y), 3, Scalar(255, 0 , 0), 3);
+        fcp.push_back(Point(cvRound(x), cvRound(y)));
+    }
+    polylines(current, fcp, false, Scalar(255, 0, 0), 3);
     out.clear();
 
+    
     // draw right lines
+    
     perspectiveTransform(right, out, inverted);
+
     for (int i = 0; i < out.size() - 1; i++ ){
         line(current, out[i], out[i + 1], Scalar(0, 255, 0), 3);
-
+        
     }
+   
+    Mat rcurve = leastSquares(out);
+    float ra = rcurve.at<float>(0);
+    float rb = rcurve.at<float>(1);
+    float rc = rcurve.at<float>(2);
+
+   vector<Point> fittedCurvePoints;
+   for (int i = 0; i < out.size(); i++){
+        float x = out[i].x;
+        float y = ra*x*x + rb*x + rc;
+        fittedCurvePoints.push_back(Point(cvRound(x), cvRound(y)));
+        //circle(current, Point(x, y), 3, Scalar(255, 0, 0), 3);
+   }
+    
+
+   polylines(current, fittedCurvePoints, false, Scalar(255, 0, 0), 3);
+
+
 
     return current;
 
 }
 
-void
+
+
+
+
+
+
+
+
+
+
 
 
 
 
 int main() {
-    string path = "../img/challenge_video_frame_1.jpg";
+    string path = "../img/project_video_frame_809.jpg";
     original = imread(path);
 
     if (original.empty()) {
@@ -296,6 +380,7 @@ int main() {
 
     Mat current = original.clone();
     int stage = 0;
+
 
     while (true) {
         Mat display;
@@ -345,8 +430,8 @@ int main() {
             case 6: {
                 
 
-                int width = 500;
-                int height = 60;
+                int width = 300;
+                int height = 30;
                 // get points of left and right lanes
                 vector<Point2f> lpoints = slidingWindow(current, Rect(0, current.rows - height,  width, height));
                 vector<Point2f> rpoints = slidingWindow(current, Rect(current.cols - width, current.rows - height, width, height));
@@ -359,6 +444,12 @@ int main() {
                 display = original.clone();
                 
                 label = "7 - Sliding Window";
+                break;
+            }
+            case 7: {
+
+                display = original.clone();
+                label = "8 - Least Squares";
                 break;
             }
             

@@ -20,13 +20,24 @@ Mat regionOfInterest(const Mat& img){
     int height = img.rows;
     int width = img.cols;
 
-   
+    
+
+    
+    // srcpoints.clear();
+    // srcpoints.push_back(Point2f(560, 470));  // top left
+    // srcpoints.push_back(Point2f(720, 470));  // top right 
+    // srcpoints.push_back(Point2f(1100, 680)); // bottom right 
+    // srcpoints.push_back(Point2f(200, 680)); // bottom left
+
+
+
 
     srcpoints.clear();
-    srcpoints.push_back(Point2f(560, 470));  // top left
-    srcpoints.push_back(Point2f(720, 470));  // top right 
-    srcpoints.push_back(Point2f(1100, 680)); // bottom right 
-    srcpoints.push_back(Point2f(200, 680)); // bottom left
+    srcpoints.push_back(Point2f(300, 470));  // top left
+    srcpoints.push_back(Point2f(980, 470));  // top right 
+    srcpoints.push_back(Point2f(width - 50, 720)); // bottom right 
+    srcpoints.push_back(Point2f(50, 720)); 
+
 
     vector<Point> intPoints;
     for (const auto& point : srcpoints) {
@@ -66,6 +77,11 @@ Mat warp(const Mat& in){
 }
 
 Mat filterColor(const Mat& in){
+
+
+    // TODO improve thresholding
+
+
     Mat hsv;
     cvtColor(in, hsv, COLOR_BGR2HSV);  // use BGR2HSV since imread loads as BGR
 
@@ -137,6 +153,8 @@ vector<Point2f> slidingWindow(const Mat& in, Rect window){
 
     cvtColor(in , current, COLOR_GRAY2BGR);
 
+    
+
     while (true){
 
         // middle of current window
@@ -157,13 +175,19 @@ vector<Point2f> slidingWindow(const Mat& in, Rect window){
 
         // keep track of previous average
         if (points.empty()) {
-            // If this is the first window, use the center
-            avg = window.x + window.width * 0.5;
+            // If this is the first left window, start on left side 
+            if (window.x < 550){
+                avg = 150;
+            } else {
+                avg = 1280 - 150;
+            }
+            
         } else {
             // Otherwise use last known avg
             avg = points.back().x;
         }
         
+        bool empty = true;
         // find avg x position of pixels
         if (!whitePixels.empty()) {
             float sum = 0.0;
@@ -171,13 +195,17 @@ vector<Point2f> slidingWindow(const Mat& in, Rect window){
                 sum += window.x + pt.x;
             }
             avg = sum / whitePixels.size();
+            empty = false;
+
+
+            // add avg x of pixels and their height to vec
+            Point point(avg, window.y + window.height*0.5);
+            points.push_back( point);
         }
         
 
 
-        // add avg x of pixels and their height to vec
-        Point point(avg, window.y + window.height*0.5);
-        points.push_back( point);
+        
 
 
         
@@ -185,8 +213,12 @@ vector<Point2f> slidingWindow(const Mat& in, Rect window){
         // draw the window and the avg point
         Mat frame;
         current.copyTo(frame);
-        rectangle(frame, window, Scalar(0, 255, 0), 2);        // Green window
-        circle(frame, point, 5, Scalar(0, 0, 255), 3);       // Cyan point
+        rectangle(frame, window, Scalar(0, 255, 0), 2);        
+
+        if (!empty){
+            circle(frame, Point(avg, window.y + window.height * 0.5), 5, Scalar(0, 0, 255), 3);  
+        }
+             
 
         debugFrames.push_back(frame);
 
@@ -204,7 +236,10 @@ vector<Point2f> slidingWindow(const Mat& in, Rect window){
         }
 
         // move window 
-        window.x += (point.x - middle);
+        if (!empty){
+            window.x += (avg - middle);
+        }
+        
 
         // if out of range move back in 
         if (window.x < 0){
@@ -216,7 +251,7 @@ vector<Point2f> slidingWindow(const Mat& in, Rect window){
         
     }
    
-    
+   
 
 
 
@@ -226,8 +261,38 @@ vector<Point2f> slidingWindow(const Mat& in, Rect window){
 
 }
 
+Mat leastSquares(vector<Point2f> pts){
+
+    int n = static_cast<int>(pts.size());
+    Mat A(n, 3, CV_32F);
+    Mat b(n, 1, CV_32F);
+    Mat coef;
+
+
+    for (int i = 0 ; i < pts.size(); i++){
+        float x = static_cast<float>(pts[i].x);
+        A.at<float>(i, 0) = x*x;
+        A.at<float>(i, 1) = x;
+        A.at<float>(i, 2) = 1.0;
+        b.at<float>(i, 0) = static_cast<float>(pts[i].y);
+    }
+
+    solve(A, b, coef, DECOMP_SVD);
+
+    return coef;
+}
+
 
 Mat drawPoints(const Mat& in, vector<Point2f> left, vector<Point2f> right){
+
+
+    // TODO possible improve least squares
+
+    static Mat lastLeftCurve = (Mat_<float>(3, 1) << 0, 0.5, 0);
+    static Mat lastRightCurve = (Mat_<float>(3, 1) << 0, -0.5, 0);
+
+    static vector<Point> lCurvePoints;
+    static vector<Point> rCurvePoints;
 
     Mat current;
     in.copyTo(current);
@@ -236,20 +301,76 @@ Mat drawPoints(const Mat& in, vector<Point2f> left, vector<Point2f> right){
 
     // draw left lines
     perspectiveTransform(left, out, inverted);
-
+   /*
     for (int i = 0; i < out.size() - 1; i++ ){
+       
         line(current, out[i], out[i + 1], Scalar(0, 255, 0), 3);
-
+        
     }
+    */
+    Mat lcurve;
+    try{
+        lcurve = leastSquares(out);
+        lastLeftCurve = lcurve;
+        
+    } catch (...){
+        lcurve = lastLeftCurve;
+    }
+    float la = lcurve.at<float>(0);
+    float lb = lcurve.at<float>(1);
+    float lc = lcurve.at<float>(2);
+        
 
+    lCurvePoints.clear();
+
+    for (int i = 0; i < out.size(); i++){
+        float x = out[i].x;
+        float y = la*x*x + lb*x + lc;
+        //circle(current, Point(x, y), 3, Scalar(255, 0 , 0), 3);
+        lCurvePoints.push_back(Point(cvRound(x), cvRound(y)));
+    }
+    polylines(current, lCurvePoints, false, Scalar(255, 0, 0), 3);
+    
+
+    
     out.clear();
 
+    
     // draw right lines
+    
     perspectiveTransform(right, out, inverted);
+    /*
     for (int i = 0; i < out.size() - 1; i++ ){
         line(current, out[i], out[i + 1], Scalar(0, 255, 0), 3);
-
+        
     }
+   */
+    Mat rcurve;
+    try {
+        rcurve = leastSquares(out);
+        lastRightCurve = rcurve.clone();
+        
+    } catch (...){
+        rcurve = lastRightCurve.clone();
+    }
+    float ra = rcurve.at<float>(0);
+    float rb = rcurve.at<float>(1);
+    float rc = rcurve.at<float>(2);
+
+    rCurvePoints.clear();
+
+    for (int i = 0; i < out.size(); i++){
+        float x = out[i].x;
+        float y = ra*x*x + rb*x + rc;
+        rCurvePoints.push_back(Point(cvRound(x), cvRound(y)));
+        //circle(current, Point(x, y), 3, Scalar(255, 0, 0), 3);
+    }
+
+    polylines(current, rCurvePoints, false, Scalar(255, 0, 0), 3);
+    
+    
+
+
 
     return current;
 
@@ -257,11 +378,8 @@ Mat drawPoints(const Mat& in, vector<Point2f> left, vector<Point2f> right){
 
 
 
-
-
-
-
 int main() {
+    
     string path = "../vid/project_video.mp4";
 
     VideoCapture cap(path);
