@@ -30,28 +30,28 @@ class LaneDetector {
 
         
 
-        Mat processFrame(Mat& current){
+            Mat processFrame(Mat& current){
 
-            current = regionOfInterest(current).clone();
-            current = warp(current).clone();
-            current = filterColor(current).clone();
-            current = smooth(current).clone();
-            current = thresholdBinary(current).clone();
+                original = current.clone();
+                regionOfInterest(current);
+                warp(current);
+                filterColor(current);
+                smooth(current);
+                thresholdBinary(current);
+    
+                int widthW = 500;
+                int heightW = 60;
+    
+                vector<Point2f> lpoints = slidingWindow(current, Rect(0, current.rows - heightW,  widthW, heightW));
+                vector<Point2f> rpoints = slidingWindow(current, Rect(current.cols - widthW, current.rows - heightW, widthW, heightW));
+    
+                drawPoints(original, lpoints, rpoints);
+                
+                return original;
+            }
 
-            int widthW = 500;
-            int heightW = 60;
-
-            vector<Point2f> lpoints = slidingWindow(current, Rect(0, current.rows - heightW,  widthW, heightW));
-            vector<Point2f> rpoints = slidingWindow(current, Rect(current.cols - widthW, current.rows - heightW, widthW, heightW));
-
-            original = drawPoints(original, lpoints, rpoints);
+        void regionOfInterest(Mat& current){
             
-            return original;
-        }
-
-        Mat regionOfInterest(Mat& in){
-            Mat current;
-            in.copyTo(current);
 
             Mat mask = Mat::zeros(current.size(), current.type());
             vector<Point> intPoints;
@@ -62,25 +62,22 @@ class LaneDetector {
             vector<vector<Point>> fillPolyPoints = {intPoints};
             fillPoly(mask, fillPolyPoints, Scalar(255, 255, 255));
             Mat masked;
-            bitwise_and(current, mask, masked);
-            return masked;
+            bitwise_and(current, mask, current);
+            
         }
         
-        Mat warp(Mat& in){
-            
-            Mat current;
-            in.copyTo(current);
-
+        void warp(Mat& current){
+           
             Mat perspectiveMatrix = getPerspectiveTransform(srcpoints, dstpoints);
             invert(perspectiveMatrix, inverted);
-            Mat warped;
-            warpPerspective(current, warped, perspectiveMatrix, Size(WIDTH, HEIGHT));
-            return warped;
+            
+            warpPerspective(current, current, perspectiveMatrix, Size(WIDTH, HEIGHT));
+            
         }
 
-        Mat filterColor(Mat& in){
+        void filterColor(Mat& current){
             Mat hsv;
-            cvtColor(in, hsv, COLOR_BGR2HSV);  // use BGR2HSV since imread loads as BGR
+            cvtColor(current, hsv, COLOR_BGR2HSV);  // use BGR2HSV since imread loads as BGR
         
             // Yellow range in HSV
             Mat maskYellow;
@@ -91,34 +88,27 @@ class LaneDetector {
             inRange(hsv, Scalar(0, 0, 200), Scalar(180, 30, 255), maskWhite);
         
             // Combine masks
-            Mat combinedMask;
-            bitwise_or(maskYellow, maskWhite, combinedMask);
+            
+            bitwise_or(maskYellow, maskWhite, current);
         
-            return combinedMask;
+            
         }
 
-        Mat smooth(Mat& in){
+        void smooth(Mat& current){
 
-            Mat current;
-            in.copyTo(current);
-
+            
             Mat blurred;
-            GaussianBlur(current, blurred, Size(9, 9), 0);
+            GaussianBlur(current, current, Size(9, 9), 0);
             Mat kernel = Mat::ones(15, 15, CV_8U);
-            dilate(blurred, blurred, kernel);
-            erode(blurred, blurred, kernel);
-            morphologyEx(blurred, blurred, MORPH_CLOSE, kernel);
-            return blurred;
+            dilate(current, current, kernel);
+            erode(current, current, kernel);
+            morphologyEx(current, current, MORPH_CLOSE, kernel);
+            
         }
 
-        Mat thresholdBinary(Mat& in){
-
-            Mat current;
-            in.copyTo(current);
-
-            Mat binary;
-            threshold(current, binary, 150, 255, THRESH_BINARY | THRESH_OTSU);
-            return binary;
+        void thresholdBinary(Mat& current){
+            threshold(current, current, 150, 255, THRESH_BINARY);
+           
         }
 
         vector<Point2f> getWhitePixels(Mat& img){
@@ -135,11 +125,10 @@ class LaneDetector {
             
         }
 
-        vector<Point2f> slidingWindow(Mat& in, Rect window){
+        vector<Point2f> slidingWindow(Mat& current, Rect window){
             
-            Mat current;
-            in.copyTo(current);
-            cvtColor(in, current, COLOR_GRAY2BGR);
+            
+            //cvtColor(current, current, COLOR_GRAY2BGR);
 
             vector<Point2f> points;
             vector<Mat> debugFrames;
@@ -153,9 +142,9 @@ class LaneDetector {
                 // find region specified by current window
                 //Mat roi = current(window);
         
-                Mat roi = current(window);
-                Mat roiGray;
-                cvtColor(roi, roiGray, COLOR_BGR2GRAY);
+                Mat roiGray = current(window);
+                //Mat roiGray;
+                //cvtColor(roi, roiGray, COLOR_BGR2GRAY);
 
                 // find all white pixels
                 vector<Point2f> whitePixels = getWhitePixels(roiGray);
@@ -262,10 +251,8 @@ class LaneDetector {
         }
 
 
-        Mat drawPoints(Mat& in, vector<Point2f> left, vector<Point2f> right){
-            Mat current;
-            in.copyTo(current);
-
+        void drawPoints(Mat& current, vector<Point2f> left, vector<Point2f> right){
+           
             vector<Point> lCurvePoints;
             vector<Point> rCurvePoints;
 
@@ -323,7 +310,7 @@ class LaneDetector {
         
             polylines(current, rCurvePoints, false, Scalar(255, 0, 0), 3);
 
-            return current;
+            
         }   
 };
 
