@@ -358,19 +358,8 @@ Mat drawPoints(const Mat& in, vector<Point2f> left, vector<Point2f> right){
 
 
 
-
-
-
-
-
-
-
-
-
-
-
 int main() {
-    string path = "../img/project_video_frame_809.jpg";
+    string path = "../img/straight_lines1.jpg";
     original = imread(path);
 
     if (original.empty()) {

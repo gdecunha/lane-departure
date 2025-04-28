@@ -1,7 +1,7 @@
 #include <opencv2/opencv.hpp>
 #include <iostream>
 #include <vector>
-
+#include <utility>
 
 
 using namespace std;
@@ -39,11 +39,15 @@ class LaneDetector {
                 smooth(current);
                 thresholdBinary(current);
     
-                int widthW = 500;
+                int widthW = 100;
                 int heightW = 60;
-    
-                vector<Point2f> lpoints = slidingWindow(current, Rect(0, current.rows - heightW,  widthW, heightW));
-                vector<Point2f> rpoints = slidingWindow(current, Rect(current.cols - widthW, current.rows - heightW, widthW, heightW));
+                pair<int, int > peak = histogram(current);
+
+                Rect leftWindow(max(peak.first - widthW/2, 0), current.rows - heightW,  widthW, heightW);
+                Rect rightWindow(min(peak.second - widthW/2, current.cols - widthW), current.rows - heightW, widthW, heightW);
+
+                vector<Point2f> lpoints = slidingWindow(current, leftWindow);
+                vector<Point2f> rpoints = slidingWindow(current, rightWindow);
     
                 drawPoints(original, lpoints, rpoints);
                 
@@ -125,6 +129,20 @@ class LaneDetector {
             
         }
 
+
+        pair<int, int> histogram(const Mat& img){
+            Mat hist;
+            reduce(img.rowRange(img.rows/2, img.rows), hist, 0, REDUCE_SUM, CV_32S);
+            int mid = hist.cols/2;
+            Point lMaxLoc, rMaxLoc;
+
+            // find max of each half 
+            minMaxLoc(hist.colRange(0, mid), nullptr, nullptr, nullptr, &lMaxLoc);
+            minMaxLoc(hist.colRange(mid, hist.cols), nullptr, nullptr, nullptr, &rMaxLoc);
+          
+            return std::make_pair(lMaxLoc.x, (rMaxLoc.x + mid) ); 
+        }
+
         vector<Point2f> slidingWindow(Mat& current, Rect window){
             
             
@@ -132,6 +150,13 @@ class LaneDetector {
 
             vector<Point2f> points;
             vector<Mat> debugFrames;
+
+            bool left = false;
+            if (window.x < current.cols / 2){
+                left = true;
+            }
+            
+
 
             
             while (true){
@@ -143,28 +168,21 @@ class LaneDetector {
                 //Mat roi = current(window);
         
                 Mat roiGray = current(window);
-                //Mat roiGray;
-                //cvtColor(roi, roiGray, COLOR_BGR2GRAY);
-
+                
                 // find all white pixels
                 vector<Point2f> whitePixels = getWhitePixels(roiGray);
 
                 float avg;
+                bool empty = true;
 
                 // keep track of previous average
-                if (points.empty()) {
-                    // If this is the first left window, start on left side 
-                    if (window.x < 550){
-                        avg = 150;
-                    } else {
-                        avg = WIDTH - 150;
-                    }
-                    
+                if (!points.empty()) {
+                    avg = points.back().x;
                 } else {
                     // Otherwise use last known avg
-                    avg = points.back().x;
+                    avg = middle;
                 }
-                bool empty = true;
+                
 
                 // find avg x position of pixels
                 if (!whitePixels.empty()) {
@@ -184,7 +202,8 @@ class LaneDetector {
 
                 /// DEBUG
                 Mat frame;
-                current.copyTo(frame);
+                
+                cvtColor(current, frame, COLOR_GRAY2BGR);
                 rectangle(frame, window, Scalar(0, 255, 0), 2);        
         
                 if (!empty){
@@ -199,9 +218,6 @@ class LaneDetector {
 
                 // move up
                 window.y -= window.height;
-                
-                
-
                 // check if at top
                 if (window.y < 0) { 
                     window.y = 0;
@@ -209,8 +225,16 @@ class LaneDetector {
                 }
 
                 // move window 
-                if (!empty){
+                if (!empty ){
                     window.x += (avg - middle);
+                } else {
+                    // shift slightly right if left window
+                    if (middle < current.cols /2){
+                        window.x += 10;
+                    } else {
+                        // shift slightly left if right window
+                        window.x -= 10;
+                    }
                 }
                 
 
@@ -223,7 +247,14 @@ class LaneDetector {
 
                 
             }
-           
+            for (const auto& frame : debugFrames) {
+                namedWindow("Sliding Window Playback", WINDOW_NORMAL);
+                moveWindow("Sliding Window Playback", 300, 300);
+                imshow("Sliding Window Playback", frame);
+                waitKey(1000);  // Longer pause to visualize motion
+            }
+            destroyWindow("Sliding Window Playback");
+
             return points;
 
         }
