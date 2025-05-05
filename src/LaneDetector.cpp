@@ -1,320 +1,268 @@
 #include <opencv2/opencv.hpp>
 #include <iostream>
 #include <vector>
-
-
+#include <chrono>
+#include "LaneDetector.h"
 
 using namespace std;
 using namespace cv;
-
+using namespace std::chrono;
 
 #define WIDTH 1280
 #define HEIGHT 720
 
 
-class LaneDetector {
-    private: 
-        Mat original;
-        Mat inverted;
-        vector<Point2f> srcpoints, dstpoints;
+LaneDetector::LaneDetector(Mat& image, vector<Point2f> src, vector<Point2f> dst)
+    : original{image}, srcpoints{src}, dstpoints{dst} {}
 
-        Mat lastLeftCurve = (Mat_<float>(3, 1) << 0, 0.5, 0);
-        Mat lastRightCurve = (Mat_<float>(3, 1) << 0, -0.5, 0);
+Mat LaneDetector::processFrame(Mat& current){
+
+        original = current.clone();
+        regionOfInterest(current);
+        warp(current);
+        filterColor(current);
+        smooth(current);
+        thresholdBinary(current);
+
+        int widthW = 500;
+        int heightW = 60;
+
+        vector<Point2f> lpoints = slidingWindow(current, Rect(0, current.rows - heightW,  widthW, heightW));
+        vector<Point2f> rpoints = slidingWindow(current, Rect(current.cols - widthW, current.rows - heightW, widthW, heightW));
+
+        drawPoints(original, lpoints, rpoints);
+        
+        return original;
+    }
+
+void LaneDetector::regionOfInterest(Mat& current){
     
-        
-    public:
-        LaneDetector(Mat& image, vector<Point2f> src, vector<Point2f> dst) :
-            original{image}, 
-            srcpoints{src},
-            dstpoints{dst} {}
 
-        
-
-            Mat processFrame(Mat& current){
-
-                original = current.clone();
-                regionOfInterest(current);
-                warp(current);
-                filterColor(current);
-                smooth(current);
-                thresholdBinary(current);
+    Mat mask = Mat::zeros(current.size(), current.type());
+    vector<Point> intPoints;
+    for (const auto& point : srcpoints) {
+        intPoints.push_back(Point(static_cast<int>(point.x), static_cast<int>(point.y)));
+    }
+    fillPoly(mask, intPoints, Scalar(255, 255, 255));
+    vector<vector<Point>> fillPolyPoints = {intPoints};
+    fillPoly(mask, fillPolyPoints, Scalar(255, 255, 255));
+    Mat masked;
+    bitwise_and(current, mask, current);
     
-                int widthW = 500;
-                int heightW = 60;
+}
+void LaneDetector::warp(Mat& current){
     
-                vector<Point2f> lpoints = slidingWindow(current, Rect(0, current.rows - heightW,  widthW, heightW));
-                vector<Point2f> rpoints = slidingWindow(current, Rect(current.cols - widthW, current.rows - heightW, widthW, heightW));
+    Mat perspectiveMatrix = getPerspectiveTransform(srcpoints, dstpoints);
+    invert(perspectiveMatrix, inverted);
     
-                drawPoints(original, lpoints, rpoints);
-                
-                return original;
+    warpPerspective(current, current, perspectiveMatrix, Size(WIDTH, HEIGHT));
+    
+}
+void LaneDetector::filterColor(Mat& current){
+    Mat hsv;
+    cvtColor(current, hsv, COLOR_BGR2HSV);  // use BGR2HSV since imread loads as BGR
+
+    // Yellow range in HSV
+    Mat maskYellow;
+    inRange(hsv, Scalar(15, 100, 100), Scalar(35, 255, 255), maskYellow);
+
+    // White range in HSV
+    Mat maskWhite;
+    inRange(hsv, Scalar(0, 0, 200), Scalar(180, 30, 255), maskWhite);
+
+    // Combine masks
+    
+    bitwise_or(maskYellow, maskWhite, current);
+
+    
+}
+void LaneDetector::smooth(Mat& current){
+
+    
+    Mat blurred;
+    GaussianBlur(current, current, Size(5, 5), 0);
+    
+    
+}
+void LaneDetector::thresholdBinary(Mat& current){
+    threshold(current, current, 150, 255, THRESH_BINARY);
+    
+}
+
+vector<Point2f> LaneDetector::slidingWindow(Mat& current, Rect window){
+    
+    
+    //cvtColor(current, current, COLOR_GRAY2BGR);
+
+    vector<Point2f> points;
+    vector<Mat> debugFrames;
+
+    
+    while (true){
+
+        // middle of current window
+        float middle = window.x + window.width * 0.5;
+
+        // find region specified by current window
+        //Mat roi = current(window);
+
+        Mat roiGray = current(window);
+        //Mat roiGray;
+        //cvtColor(roi, roiGray, COLOR_BGR2GRAY);
+
+        // find all white pixels
+        vector<Point2f> whitePixels;
+        findNonZero(roiGray, whitePixels);
+
+        float avg;
+
+        // keep track of previous average
+        if (points.empty()) {
+            // If this is the first left window, start on left side 
+            if (window.x < 550){
+                avg = 150;
+            } else {
+                avg = WIDTH - 150;
             }
-
-        void regionOfInterest(Mat& current){
             
+        } else {
+            // Otherwise use last known avg
+            avg = points.back().x;
+        }
+        bool empty = true;
 
-            Mat mask = Mat::zeros(current.size(), current.type());
-            vector<Point> intPoints;
-            for (const auto& point : srcpoints) {
-                intPoints.push_back(Point(static_cast<int>(point.x), static_cast<int>(point.y)));
+        // find avg x position of pixels
+        if (!whitePixels.empty()) {
+            float sum = 0.0;
+            for (const auto& pt : whitePixels) {
+                sum += window.x + pt.x;
             }
-            fillPoly(mask, intPoints, Scalar(255, 255, 255));
-            vector<vector<Point>> fillPolyPoints = {intPoints};
-            fillPoly(mask, fillPolyPoints, Scalar(255, 255, 255));
-            Mat masked;
-            bitwise_and(current, mask, current);
-            
-        }
-        
-        void warp(Mat& current){
-           
-            Mat perspectiveMatrix = getPerspectiveTransform(srcpoints, dstpoints);
-            invert(perspectiveMatrix, inverted);
-            
-            warpPerspective(current, current, perspectiveMatrix, Size(WIDTH, HEIGHT));
-            
-        }
-
-        void filterColor(Mat& current){
-            Mat hsv;
-            cvtColor(current, hsv, COLOR_BGR2HSV);  // use BGR2HSV since imread loads as BGR
-        
-            // Yellow range in HSV
-            Mat maskYellow;
-            inRange(hsv, Scalar(15, 100, 100), Scalar(35, 255, 255), maskYellow);
-        
-            // White range in HSV
-            Mat maskWhite;
-            inRange(hsv, Scalar(0, 0, 200), Scalar(180, 30, 255), maskWhite);
-        
-            // Combine masks
-            
-            bitwise_or(maskYellow, maskWhite, current);
-        
-            
-        }
-
-        void smooth(Mat& current){
-
-            
-            Mat blurred;
-            GaussianBlur(current, current, Size(9, 9), 0);
-            Mat kernel = Mat::ones(15, 15, CV_8U);
-            dilate(current, current, kernel);
-            erode(current, current, kernel);
-            morphologyEx(current, current, MORPH_CLOSE, kernel);
-            
-        }
-
-        void thresholdBinary(Mat& current){
-            threshold(current, current, 150, 255, THRESH_BINARY);
-           
-        }
-
-        vector<Point2f> getWhitePixels(Mat& img){
-            vector<Point2f> points;
-
-            for (int y = 0; y < img.rows; y++) {
-                for (int x = 0; x < img.cols; x++) {
-                    if (img.at<uchar>(y, x) == 255) {
-                        points.emplace_back(Point2f(x, y));
-                    }
-                }
-            }
-            return points;
-            
-        }
-
-        vector<Point2f> slidingWindow(Mat& current, Rect window){
-            
-            
-            //cvtColor(current, current, COLOR_GRAY2BGR);
-
-            vector<Point2f> points;
-            vector<Mat> debugFrames;
-
-            
-            while (true){
-
-                // middle of current window
-                float middle = window.x + window.width * 0.5;
-        
-                // find region specified by current window
-                //Mat roi = current(window);
-        
-                Mat roiGray = current(window);
-                //Mat roiGray;
-                //cvtColor(roi, roiGray, COLOR_BGR2GRAY);
-
-                // find all white pixels
-                vector<Point2f> whitePixels = getWhitePixels(roiGray);
-
-                float avg;
-
-                // keep track of previous average
-                if (points.empty()) {
-                    // If this is the first left window, start on left side 
-                    if (window.x < 550){
-                        avg = 150;
-                    } else {
-                        avg = WIDTH - 150;
-                    }
-                    
-                } else {
-                    // Otherwise use last known avg
-                    avg = points.back().x;
-                }
-                bool empty = true;
-
-                // find avg x position of pixels
-                if (!whitePixels.empty()) {
-                    float sum = 0.0;
-                    for (const auto& pt : whitePixels) {
-                        sum += window.x + pt.x;
-                    }
-                    avg = sum / whitePixels.size();
-                    empty = false;
+            avg = sum / whitePixels.size();
+            empty = false;
 
 
-                    // add avg x of pixels and their height to vec
-                    Point point(avg, window.y + window.height*0.5);
-                    points.push_back( point);
-                }
-
-
-                /// DEBUG
-                Mat frame;
-                current.copyTo(frame);
-                rectangle(frame, window, Scalar(0, 255, 0), 2);        
-        
-                if (!empty){
-                    circle(frame, Point(avg, window.y + window.height * 0.5), 5, Scalar(0, 0, 255), 3);  
-                }
-                     
-        
-                debugFrames.push_back(frame);
-                ////
-
-
-
-                // move up
-                window.y -= window.height;
-                
-                
-
-                // check if at top
-                if (window.y < 0) { 
-                    window.y = 0;
-                    break;
-                }
-
-                // move window 
-                if (!empty){
-                    window.x += (avg - middle);
-                }
-                
-
-                // if out of range move back in 
-                if (window.x < 0){
-                    window.x = 0;
-                } else if (window.x + window.width >= current.size().width){
-                    window.x = current.size().width - window.width;
-                }
-
-                
-            }
-           
-            return points;
-
+            // add avg x of pixels and their height to vec
+            Point point(avg, window.y + window.height*0.5);
+            points.push_back( point);
         }
 
 
-        Mat leastSquares(vector<Point2f> pts){
+        // move up
+        window.y -= window.height;
+        
+        
 
-            int n = static_cast<int>(pts.size());
-            Mat A(n, 3, CV_32F);
-            Mat b(n, 1, CV_32F);
-            Mat coef;
-        
-        
-            for (int i = 0 ; i < pts.size(); i++){
-                float x = static_cast<float>(pts[i].x);
-                A.at<float>(i, 0) = x*x;
-                A.at<float>(i, 1) = x;
-                A.at<float>(i, 2) = 1.0;
-                b.at<float>(i, 0) = static_cast<float>(pts[i].y);
-            }
-        
-            solve(A, b, coef, DECOMP_SVD);
-        
-            return coef;
+        // check if at top
+        if (window.y < 0) { 
+            window.y = 0;
+            break;
         }
 
-
-        void drawPoints(Mat& current, vector<Point2f> left, vector<Point2f> right){
-           
-            vector<Point> lCurvePoints;
-            vector<Point> rCurvePoints;
-
-            vector<Point2f> out;
-           
-
-            perspectiveTransform(left, out, inverted);
-            Mat lcurve;
-            try{
-                lcurve = leastSquares(out);
-                lastLeftCurve = lcurve;
-                
-            } catch (...){
-                lcurve = lastLeftCurve;
-            }
-            float la = lcurve.at<float>(0);
-            float lb = lcurve.at<float>(1);
-            float lc = lcurve.at<float>(2);
-                
+        // move window 
+        if (!empty){
+            window.x += (avg - middle);
+        }
         
-            lCurvePoints.clear();
+
+        // if out of range move back in 
+        if (window.x < 0){
+            window.x = 0;
+        } else if (window.x + window.width >= current.size().width){
+            window.x = current.size().width - window.width;
+        }
+
         
-            for (int i = 0; i < out.size(); i++){
-                float x = out[i].x;
-                float y = la*x*x + lb*x + lc;
-                //circle(current, Point(x, y), 3, Scalar(255, 0 , 0), 3);
-                lCurvePoints.push_back(Point(cvRound(x), cvRound(y)));
-            }
-            polylines(current, lCurvePoints, false, Scalar(255, 0, 0), 3);
+    }
+    
+    return points;
+
+}
+
+Mat LaneDetector::leastSquares(vector<Point2f> pts){
+
+    int n = static_cast<int>(pts.size());
+    Mat A(n, 3, CV_32F);
+    Mat b(n, 1, CV_32F);
+    Mat coef;
 
 
-            out.clear();
+    for (int i = 0 ; i < pts.size(); i++){
+        float x = static_cast<float>(pts[i].x);
+        A.at<float>(i, 0) = x*x;
+        A.at<float>(i, 1) = x;
+        A.at<float>(i, 2) = 1.0;
+        b.at<float>(i, 0) = static_cast<float>(pts[i].y);
+    }
 
-            perspectiveTransform(right, out, inverted);
-            Mat rcurve;
-            try {
-                rcurve = leastSquares(out);
-                lastRightCurve = rcurve.clone();
-                
-            } catch (...){
-                rcurve = lastRightCurve.clone();
-            }
-            float ra = rcurve.at<float>(0);
-            float rb = rcurve.at<float>(1);
-            float rc = rcurve.at<float>(2);
+    solve(A, b, coef, DECOMP_SVD);
+
+    return coef;
+}
+
+
+void LaneDetector::drawPoints(Mat& current, vector<Point2f> left, vector<Point2f> right){
+    
+    vector<Point> lCurvePoints;
+    vector<Point> rCurvePoints;
+
+    vector<Point2f> out;
+    
+
+    perspectiveTransform(left, out, inverted);
+    Mat lcurve;
+    try{
+        lcurve = leastSquares(out);
+        lastLeftCurve = lcurve;
         
-            rCurvePoints.clear();
+    } catch (...){
+        lcurve = lastLeftCurve;
+    }
+    float la = lcurve.at<float>(0);
+    float lb = lcurve.at<float>(1);
+    float lc = lcurve.at<float>(2);
         
-            for (int i = 0; i < out.size(); i++){
-                float x = out[i].x;
-                float y = ra*x*x + rb*x + rc;
-                rCurvePoints.push_back(Point(cvRound(x), cvRound(y)));
-            
-            }
+
+    lCurvePoints.clear();
+
+    for (int i = 0; i < out.size(); i++){
+        float x = out[i].x;
+        float y = la*x*x + lb*x + lc;
+        //circle(current, Point(x, y), 3, Scalar(255, 0 , 0), 3);
+        lCurvePoints.push_back(Point(cvRound(x), cvRound(y)));
+    }
+    polylines(current, lCurvePoints, false, Scalar(255, 0, 0), 3);
+
+
+    out.clear();
+
+    perspectiveTransform(right, out, inverted);
+    Mat rcurve;
+    try {
+        rcurve = leastSquares(out);
+        lastRightCurve = rcurve.clone();
         
-            polylines(current, rCurvePoints, false, Scalar(255, 0, 0), 3);
+    } catch (...){
+        rcurve = lastRightCurve.clone();
+    }
+    float ra = rcurve.at<float>(0);
+    float rb = rcurve.at<float>(1);
+    float rc = rcurve.at<float>(2);
 
-            
-        }   
-};
+    rCurvePoints.clear();
 
+    for (int i = 0; i < out.size(); i++){
+        float x = out[i].x;
+        float y = ra*x*x + rb*x + rc;
+        rCurvePoints.push_back(Point(cvRound(x), cvRound(y)));
+    
+    }
 
+    polylines(current, rCurvePoints, false, Scalar(255, 0, 0), 3);
+
+    
+}   
+
+/*
 int main(){
 
     string path = "../vid/project_video.mp4";
@@ -347,26 +295,50 @@ int main(){
         Point2f(0, 720)};
     
     LaneDetector detector(frame, src, dst);
-
-
+  
+    auto startT = high_resolution_clock::now();
+    double avgFPS = 0;
+    int frame_count = 0;
     while(true){
+        int64 start = getTickCount();
+
+
         cap >> frame;
         if (frame.empty()){
             cout << "End of video\n";
             break;
         }
 
-        detector = LaneDetector(frame, src, dst);
+        
         Mat processed = detector.processFrame(frame);
+        
 
-        imshow("Output", processed);
         int key = waitKey(1);
         if(key==27)break;
+        
+        int64 end = cv::getTickCount();  // <-- End timer
+        double duration = (end - start) / cv::getTickFrequency();  // seconds
+        double fps = 1.0 / duration;
+        avgFPS += fps;
+        frame_count++;
+
+        cout << "FPS: " << fps << endl;
 
     }
+
+
+
+    auto endT = high_resolution_clock::now();
+    duration<double> durationT = endT - startT;
+    cout<< "duration: " << durationT.count() << endl;
+
+    
+    avgFPS /= frame_count;
+    cout << "Average FPS: " << avgFPS << endl;
 
     cap.release();
     destroyAllWindows();
     cout << "Video processing completed\n";
     return 0;
 }
+*/

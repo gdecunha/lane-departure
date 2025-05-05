@@ -9,7 +9,8 @@ still: still.cpp
 
 video: video.cpp
 	$(CXX) video.cpp -o video $(CXXFLAGS)
-
+detector: LaneDetector.cpp
+	$(CXX) LaneDetector.cpp -o detector $(CXXFLAGS)
 
 clean:
 	rm -f still video
